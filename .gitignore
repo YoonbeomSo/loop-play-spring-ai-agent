@@ -38,3 +38,6 @@ out/
 
 ### Quest spec (외부 자료) ###
 docs/
+
+### Local AI assistant config ###
+CLAUDE.md
