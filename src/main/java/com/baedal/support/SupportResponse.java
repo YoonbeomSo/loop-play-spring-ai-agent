@@ -17,6 +17,18 @@ public record SupportResponse(
         RecommendedRouting recommendedRouting
 ) {
     /**
+     * record 정규화 — LLM 응답의 null/가변 컬렉션/음수 값을 안전하게 처리.
+     */
+    public SupportResponse {
+        relatedCategories = relatedCategories == null ? List.of() : List.copyOf(relatedCategories);
+        neededInfo = neededInfo == null ? List.of() : List.copyOf(neededInfo);
+        missingInfo = missingInfo == null ? List.of() : List.copyOf(missingInfo);
+        if (estimatedResolutionMinutes != null && estimatedResolutionMinutes < 0) {
+            estimatedResolutionMinutes = 0;
+        }
+    }
+
+    /**
      * 문의의 1차 업무 도메인.
      * 운영·후속 처리 흐름이 달라지는 영역을 별도로 분리한다.
      */

@@ -1,7 +1,7 @@
 package com.baedal.support;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -9,16 +9,10 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/support")
 public class SupportController {
 
-    private final ChatClient.Builder builder;
+    private final SupportService supportService;
 
     @PostMapping
-    public SupportResponse triage(@RequestBody ChatRequest req) {
-        return builder
-                .defaultSystem(BaedalPrompt.SYSTEM_PROMPT)
-                .build()
-                .prompt()
-                .user(req.message())
-                .call()
-                .entity(SupportResponse.class);
+    public SupportResponse triage(@Valid @RequestBody ChatRequest req) {
+        return supportService.generateSupportResponse(req.message());
     }
 }

@@ -127,7 +127,7 @@ curl -X POST localhost:8080/api/v1/support \
 초기 5개(ORDER/DELIVERY/REFUND/PAYMENT/ETC)로는 운영 흐름이 모호.
 *"라이더가 음식 엎음"* → `DELIVERY`로 보면 처리 흐름 모호, `REFUND`로 보면 발생 원인 누락 → **`CLAIM`** 이 명확한 처리 라우팅 가능.
 
-```
+```text
 ORDER · DELIVERY · PAYMENT · REFUND · CLAIM · MENU · STORE · COUPON · ACCOUNT · SYSTEM · ETC
 ```
 
