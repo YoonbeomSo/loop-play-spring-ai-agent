@@ -36,7 +36,7 @@ out/
 ### VS Code ###
 .vscode/
 
-### Quest spec (외부 자료) ###
+### Local-only docs (not for PR) ###
 docs/
 
 ### Local AI assistant config ###
