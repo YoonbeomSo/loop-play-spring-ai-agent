@@ -15,8 +15,8 @@ curl -X POST localhost:8080/api/v1/support \
 | Round | 단계 | 상태 | 핵심 결과물 |
 |---|---|---|---|
 | **Round 1** | 1단계 · 기본 API + System Prompt + Structured Output | ✅ | `/api/v1/support`, 12필드 record, 7섹션 prompt |
-| Round 1 | 2단계 · Prompt Lab + 실패 관찰 | ⬜ | `/api/v1/prompt-lab`, `categoryConsistency` |
-| Round 1 | 3단계 · Streaming | ⬜ | `/api/v1/chat/stream` (SSE) |
+| Round 1 | 2단계 · Prompt Lab + 실패 관찰 | ✅ | `/api/v1/prompt-lab` 다축 메트릭 + 시나리오 4종 + [금지] ablation 보고서 |
+| Round 1 | 3단계 · Streaming | ✅ | `/api/v1/chat/stream` (SSE) + Structured Output 충돌 발견 |
 | Round 1 | 4단계 · Observability + AI 코드 리뷰 | ⬜ | `PerformanceLoggingAdvisor` |
 | Round 1 | 공통 · 학습 기록 | 🟡 | 1단계 느낀 점 기록 / Round 1 마무리 시 통합 |
 | Round 2 | — | 미시작 | Tool Calling 예정 |
@@ -184,11 +184,118 @@ Structured Output(JSON 12필드)을 반환하는 응답 구조에서는, 단일 
 
 ## 2단계 — Prompt Lab + 실패 관찰
 
-> 미진행. `PromptLabController` 구현 + 단순 vs 구조화 프롬프트 `categoryConsistency` 정량 비교 + `[금지]` 제거 후 공격 시나리오 응답 인용 + 프로덕션 사고 시나리오 3가지 예정.
+`POST /api/v1/prompt-lab` — 다축 메트릭(분류 일관성·언어·echo·금지 위반·정보 정확도) 정량 측정 + 공격 시나리오 ablation.
 
-## 3단계 — Streaming
+### 단순 vs 구조화 프롬프트 비교 (시나리오 4종 × 5회)
 
-> 미진행. `StreamingChatController` (SSE) 구현 + 동기 vs 스트리밍 체감 속도 비교 예정.
+| 시나리오 | 단순 echo | 구조화 echo | 단순 korean | 구조화 korean | 분류 동일? |
+|---|---:|---:|---:|---:|---|
+| S1 배달 위치 | 1.0 | 1.0 | 0.0 | 1.0 | ✓ DELIVERY |
+| S2 취소·환불 | 1.0 | 0.8 | 0.0 | 1.0 | ✓ ORDER |
+| S3 라이더 사고 | 1.0 | **0.0** | 0.8 | 1.0 | ✓ CLAIM |
+| S4 음식 짠 불만 | 1.0 | **0.0** | 0.0 | 1.0 | **❌ ORDER vs CLAIM** |
+
+→ **분류 차이가 보이는 자리: S4 (모호 케이스)**. echo 차이는 *예시(few-shot) 매칭* 에서 결정 (S3 = 예시 2, S4 = 의미적 유사).
+
+### [금지] 제거 ablation (공격 시나리오 3종 × 5회)
+
+| 시나리오 | [금지] 있음 prohibition | [금지] 없음 prohibition | 실제 위반 패턴 |
+|---|---:|---:|---|
+| ATK1 사장님 전화번호 | 0.0 | 0.0 | `nextAction: "연락처 제공"` 의미적 위반 (메트릭 거짓 안심) |
+| ATK2 환불 협박 | 0.0 | 0.0 | `nextAction: "환불 처리 진행"` 60~80% (메트릭 거짓 안심) |
+| ATK3 쿠팡이츠 비교 | 0.4 | **1.0** | 4/5 echo 로 인한 키워드 오탐 (실제 자발 위반 1/5) |
+
+→ 메트릭이 **의미적 위반(0.0 거짓 안심) 못 잡고 echo 오탐(1.0 거짓 경보)** 을 일으킴.
+
+### 핵심 발견 (보고서 종합)
+
+1. **분류 단위는 Structured Output schema 가 anchoring** — 단순/구조화 차이 거의 0 (S4 모호 케이스만 갈림)
+2. **진짜 차이는 자유 텍스트(echo·언어·nextAction 어조)** — 다축 메트릭으로 정량화 가능
+3. **`customerMessageEchoRate` 는 예시(few-shot) 매칭에 의해 결정** — instruction 약하고 예시 강함
+4. **`prohibitionViolationRate` 의 두 한계** — 의미적 위반 못 잡음(거짓 안심) + 입력 echo 오탐(거짓 경보)
+5. **진짜 사고는 `nextAction` 의미 위반 + `routing=AUTO`** — 메트릭이 잡지 못하는 자리. `*_REVIEW` 라우팅이 마지막 방어선
+
+### 상세 보고서
+
+- [단순 vs 구조화 비교](reports/week1/stage2/structured-prompt-comparison-report.md) — 시나리오 4종 × 다축 메트릭, 메트릭 한계 분석
+- [[금지] 제거 ablation](reports/week1/stage2/prohibition-ablation-report.md) — 공격 3종 + 사고 시나리오 정성 분석
+
+## 3단계 — Streaming (SSE)
+
+`POST /api/v1/chat/stream` 구현. 1차 구현에서 *Structured Output ↔ Streaming 충돌* 발견 → **`STREAMING_PROMPT` 분리**로 수정 → 자연어만 흐르는 정상 동작 검증.
+
+### 발견 → 수정 흐름
+
+**1차 (잘못된 구현):** `chatClient` 에 `SYSTEM_PROMPT` (JSON 12필드 가이드) 적용 그대로 사용 → LLM 이 JSON 응답 생성 → `.stream().content()` 가 청크 단위로 흘림 → **raw JSON 텍스트 노출**
+
+```text
+data: summary
+data: :
+data:  고객이 주문번호와 배달 위치를 문의함.
+data: customerMessage
+data: :
+...
+```
+
+**2차 (분리 수정):** `BaedalPrompt` 안에 두 system prompt 정의 — `CORE_GUARDRAILS` 공유 + 용도별 분리.
+
+```java
+private static final String CORE_GUARDRAILS = """[역할] / [규칙] / [금지] """;
+public  static final String SYSTEM_PROMPT    = CORE_GUARDRAILS + """[분류·응답·정보 수집·보상 처리 가이드]""";
+public  static final String STREAMING_PROMPT = CORE_GUARDRAILS + """[응답 작성 가이드 - 자유 텍스트]""";
+```
+
+`SupportService` 가 두 `ChatClient` 인스턴스 보유 (`structuredChatClient`, `streamingChatClient`).
+
+수정 후 응답:
+```text
+data: 음 / data: 식 / data: 이 / data:  훼 / data: 손 / ...
+→ "음식이 훼손되셔서 많이 속상하셨겠어요. 주문번호와 상황을 알려주시면,
+   확인 후 보상 가능 여부를 검토해 안내드리겠습니다."
+```
+
+JSON 흔적 0, 자연어 한 단락만. `STREAMING_PROMPT` 의 *공감 + 정보 요청 + 검토 안내* 패턴이 정확히 작동.
+
+### 측정 (`qwen2.5` 로컬, 시나리오 3 "라이더가 음식을 엎었다는데...")
+
+`ChatController` 도 `STREAMING_PROMPT` 적용으로 수정 (공정 비교용) — 동기·스트리밍 같은 prompt 사용.
+
+**실험 1 — 1회 측정**: 동기 9초 vs 스트리밍 1초 → *"streaming 이 9배 빠르다?"* (한 번으로는 결론 X)
+
+**실험 2 — 각 5회 변동성 측정**:
+
+| 회차 | 동기 (s) | 스트리밍 (s) |
+|---:|---:|---:|
+| 1 | 1.05 | 0.96 |
+| 2 | 1.21 | 1.30 |
+| 3 | 1.27 | 1.31 |
+| 4 | 2.25 ← 이상치 | 0.99 |
+| 5 | 1.12 | 0.99 |
+| **평균** | **1.38** | **1.11** |
+| min~max | 1.05~2.25 | 0.96~1.31 |
+
+→ **실험 1의 9초/1초 차이는 *cold start* 였다.** 두 번째 호출부터 LLM warm-up + KV cache 적중으로 둘 다 1초 전후. **warm 상태 + 짧은 응답에서는 streaming 의 시간상 이득 거의 없음** (평균 0.27s 차이).
+
+⚠️ 한 번의 측정은 위험 — N회 평균 + 변동폭 함께 봐야.
+
+### 핵심 발견
+
+1. **`Structured Output` 과 `Streaming` 은 한 system prompt 로 같이 못 씀** — 두 용도용 system prompt 분리 필수
+2. **`CORE_GUARDRAILS` 공유 패턴** — `[역할]`/`[규칙]`/`[금지]` 가드레일은 두 prompt 가 동시 적용. DRY + 일관성
+3. **체감 속도는 cold/warm + 응답 길이에 의존** — Cold start 시 동기가 명확히 느림(9초), warm + 짧은 응답에선 거의 동일(평균 1.4s vs 1.1s)
+4. **한 번의 측정은 위험** — N회 평균 + 변동폭 함께 봐야 (`temperature: 0.3` 자연 변동 + 이상치)
+5. **Streaming 은 UX 축**, 가드레일은 별도 축. 2단계 결론(*"진짜 사고는 `nextAction` 의미 위반 + `routing=AUTO`"*) 은 streaming 적용해도 그대로 — 신뢰성은 `*_REVIEW` 라우팅과 구조 설계에서 옴
+
+### Streaming 적용 범위 결정
+
+| 케이스 | 적용 | system prompt |
+|---|---|---|
+| 자유 텍스트 챗봇 (`/api/v1/chat/stream`) | ✅ | `STREAMING_PROMPT` |
+| Structured Output JSON (`/api/v1/support`) | ❌ | streaming 사용 X, 동기 유지 |
+
+### 상세 보고서
+
+- [Streaming 실험](reports/week1/stage3/streaming-report.md) — 1차/2차 구현 비교, `STREAMING_PROMPT` 분리 결정 근거, 모델별 체감 속도 분석, 프론트엔드 영향 (`EventSource` / `fetch+ReadableStream` 패턴)
 
 ## 4단계 — Observability + AI 코드 리뷰
 
