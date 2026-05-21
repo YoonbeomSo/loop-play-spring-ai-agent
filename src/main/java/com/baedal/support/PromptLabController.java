@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -22,7 +23,10 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/v1/prompt-lab")
 public class PromptLabController {
 
-    private final ChatClient.Builder builder;
+    // ChatModel 직접 주입 — 매 요청마다 fresh builder 를 만들어 누적 빌더 bug 회피
+    // (ChatClient.Builder 를 주입받아 재사용하면 매 호출마다 defaultSystem·defaultAdvisors 가 누적될 위험)
+    private final ChatModel chatModel;
+    private final PerformanceLoggingAdvisor performanceAdvisor;
 
     /**
      * 같은 입력을 N번 호출하여 분류·자유 텍스트 품질을 다축으로 측정한다.
@@ -38,7 +42,10 @@ public class PromptLabController {
      */
     @PostMapping
     public PromptLabResult experiment(@Valid @RequestBody PromptLabRequest req) {
-        ChatClient client = builder.defaultSystem(req.systemPrompt()).build();
+        ChatClient client = ChatClient.builder(chatModel)   // 매 요청마다 fresh
+                .defaultSystem(req.systemPrompt())
+                .defaultAdvisors(performanceAdvisor)
+                .build();
         List<SupportResponse> results = new ArrayList<>(req.repeat());
         for (int i = 0; i < req.repeat(); i++) {
             results.add(client.prompt()

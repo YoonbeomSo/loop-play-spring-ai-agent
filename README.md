@@ -17,7 +17,7 @@ curl -X POST localhost:8080/api/v1/support \
 | **Round 1** | 1단계 · 기본 API + System Prompt + Structured Output | ✅ | `/api/v1/support`, 12필드 record, 7섹션 prompt |
 | Round 1 | 2단계 · Prompt Lab + 실패 관찰 | ✅ | `/api/v1/prompt-lab` 다축 메트릭 + 시나리오 4종 + [금지] ablation 보고서 |
 | Round 1 | 3단계 · Streaming | ✅ | `/api/v1/chat/stream` (SSE) + Structured Output 충돌 발견 |
-| Round 1 | 4단계 · Observability + AI 코드 리뷰 | ⬜ | `PerformanceLoggingAdvisor` |
+| Round 1 | 4단계 · Observability + AI 코드 리뷰 | 🟡 | `PerformanceLoggingAdvisor` + 토큰·시간 측정 + advisor 누적 bug 발견·수정 (AI 코드 리뷰 미진행) |
 | Round 1 | 공통 · 학습 기록 | 🟡 | 1단계 느낀 점 기록 / Round 1 마무리 시 통합 |
 | Round 2 | — | 미시작 | Tool Calling 예정 |
 
@@ -299,4 +299,67 @@ JSON 흔적 0, 자연어 한 단락만. `STREAMING_PROMPT` 의 *공감 + 정보 
 
 ## 4단계 — Observability + AI 코드 리뷰
 
-> 미진행. `PerformanceLoggingAdvisor` 구현 + 토큰/응답 시간 측정 + AI 생성 코드 프로덕션 결함 3개 리뷰 예정.
+`PerformanceLoggingAdvisor` 구현 (`CallAdvisor`) — LLM 호출의 응답 시간·토큰 사용량을 `log.info` 로 출력. `SupportService` 양쪽 `ChatClient` 에 등록.
+
+### 시나리오 6 케이스 토큰 측정
+
+각 호출 1회, advisor 로그 추출:
+
+| # | 시나리오 | inputTokens | outputTokens | elapsedMs |
+|---|---|---:|---:|---:|
+| S1 | 배달 위치 | 2655 | 147 | 5702 |
+| S2 | 취소·환불 | 2656 | 145 | 5629 |
+| S3 | 라이더 사고 | 2654 | 180 | 6516 |
+| ATK1 | 사장님 전화번호 | 2642 | 138 | 5442 |
+| ATK2 | 환불 협박 | 2651 | 169 | 6203 |
+| ATK3 | 쿠팡이츠 비교 | 2651 | 146 | 5655 |
+| **평균** | | **2651** | **154** | **5858** |
+
+→ **`inputTokens` 변동 14 토큰뿐** (2642~2656) — 사용자 메시지 길이 영향 미미. **운영 비용의 95% 가 system prompt에서 발생**.
+
+### System Prompt 2배 실험 (quest 명세 요구)
+
+`SYSTEM_PROMPT` 를 두 번 이어붙여 글자 수 2배 → 같은 시나리오 1로 측정:
+
+| Prompt 변형 | 글자 수 | inputTokens | elapsedMs |
+|---|---:|---:|---:|
+| 1배 | 7,144 | 2,655 | 11,764 |
+| 2배 | 14,290 | 4,096 (+54%) | 15,027 (+28%) |
+
+→ **글자 2배 ≠ 토큰 2배 (+54%)**. BPE tokenizer 가 반복 패턴을 효율적으로 처리. 다만 +54% 도 여전히 큰 비용. **system prompt 길이 관리가 운영 비용 최적화의 핵심**.
+
+### ⚡ 측정 중 발견 — `PromptLabController` advisor 누적 bug
+
+System Prompt 2배 실험 중 advisor 로그가 **같은 호출에 2회 출력**되는 현상 관찰:
+```
+[LLM] elapsedMs=15027 inputTokens=4096 ...   ← 같은 thread·timestamp·값 두 번
+[LLM] elapsedMs=15027 inputTokens=4096 ...
+```
+
+원인: `ChatClient.Builder` 가 singleton 으로 주입되어 매 요청마다 `defaultAdvisors(...)` 가 누적 → chain 에서 advisor 가 2회 실행.
+
+**수정**: `ChatClient.Builder` 대신 `ChatModel` 직접 주입 + `ChatClient.builder(chatModel)` 정적 팩토리로 **매 요청마다 fresh builder**:
+```java
+ChatClient client = ChatClient.builder(chatModel)   // fresh, 누적 없음
+        .defaultSystem(req.systemPrompt())
+        .defaultAdvisors(performanceAdvisor)
+        .build();
+```
+
+→ 1단계 리뷰의 *"매 요청마다 build 누적은 2주차 Tool Calling 버그 자리"* 가 가리킨 정확한 자리. **Observability 가 단순 비용 측정이 아니라 *결함 발견* 도구라는 사실 직접 검증**.
+
+### 핵심 발견
+
+1. **운영 비용의 95%가 system prompt** — `inputTokens / totalTokens = 94.5%`
+2. **글자 2배 → 토큰 +54%** — BPE 패턴 압축 효과
+3. **`SupportService` 의 캐싱 패턴이 합리적** — 한 번 build, advisor·prompt 모두 한 번만 비용
+4. **`PromptLabController` 누적 bug 발견 → `ChatClient.builder(chatModel)` 정적 팩토리로 수정**
+
+### 미진행
+
+- **AI 코드 리뷰** (quest 명세 요구) — ChatGPT/Claude 등에 *"Spring AI 로 배달 상담 챗봇을 만들어줘"* 요청 → 생성 코드의 프로덕션 결함 3개 식별. 외부 LLM 호출이라 별도 진행 필요.
+- `@ControllerAdvice` 글로벌 에러 핸들러 (coderabbitai #2 잔여) — Observability 와 같은 레이어, 다음 작업 후보.
+
+### 상세 보고서
+
+- [Observability 측정](reports/week1/stage4/observability-report.md) — 6 케이스 토큰 표, 2배 실험 결과, advisor 누적 bug 원인·수정 과정 + Observability 의 진짜 가치(*결함 발견 도구*) 분석

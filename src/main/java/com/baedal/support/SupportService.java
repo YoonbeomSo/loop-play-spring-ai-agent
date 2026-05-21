@@ -13,12 +13,18 @@ public class SupportService {
     /** Streaming(자유 텍스트) 용. `BaedalPrompt.STREAMING_PROMPT` 적용. */
     private final ChatClient streamingChatClient;
 
-    public SupportService(ChatClient.Builder structuredBuilder, ChatClient.Builder streamingBuilder) {
+    public SupportService(
+            ChatClient.Builder structuredBuilder,
+            ChatClient.Builder streamingBuilder,
+            PerformanceLoggingAdvisor performanceAdvisor
+    ) {
         this.structuredChatClient = structuredBuilder
                 .defaultSystem(BaedalPrompt.SYSTEM_PROMPT)
+                .defaultAdvisors(performanceAdvisor)
                 .build();
         this.streamingChatClient = streamingBuilder
                 .defaultSystem(BaedalPrompt.STREAMING_PROMPT)
+                .defaultAdvisors(performanceAdvisor)
                 .build();
     }
 
