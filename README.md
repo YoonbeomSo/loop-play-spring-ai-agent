@@ -293,9 +293,36 @@ JSON 흔적 0, 자연어 한 단락만. `STREAMING_PROMPT` 의 *공감 + 정보 
 | 자유 텍스트 챗봇 (`/api/v1/chat/stream`) | ✅ | `STREAMING_PROMPT` |
 | Structured Output JSON (`/api/v1/support`) | ❌ | streaming 사용 X, 동기 유지 |
 
+### 확장 — SSE 메타데이터 추가 (옵션 A: streaming + 마지막 meta)
+
+기본 streaming 은 자연어만 흐름 → 운영 시스템이 필요한 `category`/`recommendedRouting`/`missingInfo` 등 메타데이터 누락.
+**해결**: `Flux<ServerSentEvent<String>>` 로 청크 종류 분리:
+
+```
+event: token       ← 자연어 토큰 (실시간)
+data: 음
+event: token
+data: 식
+...
+event: meta        ← streaming 종료 후 12필드 JSON 한 번
+data: {"category":"CLAIM", "recommendedRouting":"AGENT_REVIEW", "missingInfo":[], ...}
+```
+
+| Trade-off | 영향 |
+|---|---|
+| 사용자 UX | 즉시 답 표시 + 끝에 메타데이터로 자동 처리 |
+| **LLM 호출** | **2회** (streaming + structured) → **비용 ×2** |
+| 정확도 | 1단계 12필드 그대로 |
+
+검증 결과 — 시나리오 3:
+- `event: token` × 31회 (자연어 streaming, 0~9초)
+- `event: meta` × 1회 (12필드 JSON, 19초 시점 — cold start 포함)
+
+→ **streaming UX + 1단계 12필드 메타데이터 모두 확보**. 운영에서 비용 부담 시 옵션 C(LLM 응답 첫 줄에 JSON, 1회 호출) 로 전환 검토.
+
 ### 상세 보고서
 
-- [Streaming 실험](reports/week1/stage3/streaming-report.md) — 1차/2차 구현 비교, `STREAMING_PROMPT` 분리 결정 근거, 모델별 체감 속도 분석, 프론트엔드 영향 (`EventSource` / `fetch+ReadableStream` 패턴)
+- [Streaming 실험](reports/week1/stage3/streaming-report.md) — 1차/2차 구현 비교, `STREAMING_PROMPT` 분리 결정 근거, 모델별 체감 속도 분석, 프론트엔드 영향 (`EventSource` / `fetch+ReadableStream` 패턴), **SSE 메타데이터 확장 옵션 A/B/C 분석**
 
 ## 4단계 — Observability + AI 코드 리뷰
 

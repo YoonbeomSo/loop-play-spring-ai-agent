@@ -233,3 +233,90 @@ streaming 은 **고객 화면의 UX 변화**일 뿐 신뢰성 가드레일과는
 | `STREAMING_PROMPT` 의 시나리오별 예시 추가 | 현재 3개 예시(시나리오 1·2·3). 모호 케이스(S4) 같은 예시 추가하면 echo 차단 일반화 가능 |
 | 4단계 Observability 연결 | streaming 호출의 토큰 수·응답 시간을 advisor 로 측정하면 동기와 비용 비교 가능 |
 | Two builder injection 검증 | Spring AI `ChatClient.Builder` 가 두 번 주입 시 fresh 인스턴스를 주는 것으로 본 실험에서 검증됐으나, 다른 Spring 버전·환경에서도 같은 동작인지 확인 |
+
+---
+
+## 확장 — SSE 에 분류 메타데이터 추가 (옵션 A: streaming + 마지막 한 번 meta)
+
+### 동기
+
+기본 streaming 응답은 `customerMessage` 자연어만 흐름. 그러나 운영 시스템은 `category` / `recommendedRouting` / `missingInfo` 같은 **메타데이터** 도 필요:
+- `recommendedRouting=AGENT_REVIEW` 면 상담사 인계 처리
+- `missingInfo=["orderNumber"]` 면 추가 정보 요청 UI 표시
+- `category=CLAIM` 이면 보상 검토 워크플로우 분기
+
+→ 사용자 화면은 streaming 으로 빠른 응답, 시스템은 마지막에 메타데이터 받아 후속 처리.
+
+### 구현 — SSE event type 으로 청크 종류 구분
+
+`Flux<String>` → `Flux<ServerSentEvent<String>>` 로 변경:
+
+```java
+public Flux<ServerSentEvent<String>> streamSupportWithMetadata(String message) {
+    Flux<ServerSentEvent<String>> tokens = streamingChatClient
+            .prompt().user(message).stream().content()
+            .map(chunk -> ServerSentEvent.<String>builder().event("token").data(chunk).build());
+
+    Mono<ServerSentEvent<String>> meta = Mono.fromCallable(() -> {
+        SupportResponse classified = generateSupportResponse(message);   // SYSTEM_PROMPT 동기 호출
+        return ServerSentEvent.<String>builder()
+                .event("meta")
+                .data(objectMapper.writeValueAsString(classified))
+                .build();
+    }).subscribeOn(Schedulers.boundedElastic());
+
+    return Flux.concat(tokens, meta);   // streaming 끝나면 meta 한 번
+}
+```
+
+### 검증 결과
+
+| 시간 | 청크 종류 | 내용 |
+|---:|---|---|
+| 0~9s | `event: token` × 31회 | `음`, `식`, `이`, ` 훼`, `손`, ... — 자연어 streaming |
+| 19s | **`event: meta`** | 12필드 JSON 한 번에 |
+
+`event: meta` 실제 응답:
+```json
+{
+  "summary": "고객이 음식 훼손에 따른 보상 가능 여부를 문의함.",
+  "customerMessage": "음식이 훼손되셔서 많이 속상하셨겠습니다...",
+  "category": "CLAIM",
+  "intent": "CLAIM_DAMAGED_FOOD",
+  "recommendedRouting": "AGENT_REVIEW",
+  "missingInfo": [],
+  ...
+}
+```
+
+### Trade-off
+
+| 항목 | 영향 |
+|---|---|
+| 사용자 화면 | 8초 후 답 표시 시작 (`event: token`) + 19초 후 자동 처리 가능 (`event: meta`) |
+| **LLM 호출** | **2회** (streaming + structured) → **비용 ×2** |
+| 총 시간 | streaming 9초 + 메타데이터 호출 10초 (cold start 영향. warm 이면 더 빠름) |
+| 운영 가치 | streaming UX + 1단계 12필드 메타데이터 모두 확보 |
+
+### 프론트엔드 구현 패턴
+
+```javascript
+eventSource.addEventListener('token', (e) => {
+  appendToMessage(e.data);   // 자연어 누적 표시
+});
+eventSource.addEventListener('meta', (e) => {
+  const meta = JSON.parse(e.data);
+  if (meta.recommendedRouting === 'AGENT_REVIEW') showEscalationButton();
+  if (meta.missingInfo.includes('orderNumber')) showInfoPrompt();
+});
+```
+
+### 대안 옵션 (구현 안 했지만 분석)
+
+| 옵션 | 호출 수 | UX | 메타데이터 정확도 | 구현 난이도 |
+|---|---|---|---|---|
+| **A (현재 구현)** — streaming + 마지막 meta 동기 호출 | LLM ×2 | streaming 즉시 | 1단계 12필드 정확 | 낮음 |
+| B — streaming 후 customerMessage 재분석 | LLM ~1.x | streaming 즉시 | 정보 손실 (입력 컨텍스트 X) | 중간 |
+| C — LLM 응답 첫 줄에 JSON, 나머지 자연어 | LLM ×1 | 첫 JSON 청크 대기 | 짧은 JSON 만 가능 | 중간 |
+
+→ **본 옵션 A 는 정확도·UX 우선, 비용 ×2 trade-off**. 운영 시 비용이 부담스러우면 옵션 C 로 전환 검토.
