@@ -17,8 +17,8 @@ curl -X POST localhost:8080/api/v1/support \
 | **Round 1** | 1단계 · 기본 API + System Prompt + Structured Output | ✅ | `/api/v1/support`, 12필드 record, 7섹션 prompt |
 | Round 1 | 2단계 · Prompt Lab + 실패 관찰 | ✅ | `/api/v1/prompt-lab` 다축 메트릭 + 시나리오 4종 + [금지] ablation 보고서 |
 | Round 1 | 3단계 · Streaming | ✅ | `/api/v1/chat/stream` (SSE) + Structured Output 충돌 발견 |
-| Round 1 | 4단계 · Observability + AI 코드 리뷰 | 🟡 | `PerformanceLoggingAdvisor` + 토큰·시간 측정 + advisor 누적 bug 발견·수정 (AI 코드 리뷰 미진행) |
-| Round 1 | 공통 · 학습 기록 | 🟡 | 1단계 느낀 점 기록 / Round 1 마무리 시 통합 |
+| Round 1 | 4단계 · Observability + AI 코드 리뷰 | 🟡 | `PerformanceLoggingAdvisor` + 토큰·시간 측정 + advisor 누적 bug 발견·수정 + `@ControllerAdvice` 글로벌 에러 핸들러 (AI 코드 리뷰는 Round 2 후 진행) |
+| Round 1 | 공통 · 학습 기록 | ✅ | 1단계 의문 + 2~4단계 잠정 답 + Round 2 연결 |
 | Round 2 | — | 미시작 | Tool Calling 예정 |
 
 ---
@@ -46,7 +46,66 @@ curl -X POST localhost:8080/api/v1/support \
 그런데 이게 **시나리오 × 프롬프트 변형 × 반복 호출** 의 조합이라 적지 않은 리소스가 들 것 같다.
 더 좋은 방법(자동 평가 지표·골든셋·LLM-as-Judge 등)이 있을지 찾아볼 필요가 있다.
 
-> 2~4단계 진행하며 각 단계 느낀 점 누적, Round 1 마무리 시 "배운 것 / 의문점 / Round 2 아이디어" 통합 작성.
+---
+
+### 2~4단계 진행하며 1단계 의문에 얻은 답 (잠정)
+
+> 본인 언어로 다듬을 영역. 각 단계의 보고서에서 발견한 근거를 기반으로 정리.
+
+**(1) "LLM 응답의 정합성 검증" → *분포 + 계약 검증***
+
+2단계 PromptLab 직접 측정으로 확인:
+- 분류 단위(`category`/`intent` enum)는 Structured Output schema 가 anchoring 하여 같은 입력 5~10회 호출에 모두 동일 → `assertEquals` 가능
+- 자유 텍스트(`customerMessage`/`summary`/`nextAction`)는 비결정적 → 분포 검증 (`customerMessageEchoRate`, `prohibitionViolationRate`, `koreanResponseRate` 같은 비율 메트릭)
+- ⚠️ 메트릭 자체가 거짓말할 수 있음 (2단계 ablation 발견 — 의미적 위반 못 잡고, echo 오탐 발생) → **raw responses 인용·사람 검토** 가 진짜 가드레일
+
+**(2) "신뢰할 수 있는 AI 시스템" → *다층 구조 + 사람 인계***
+
+1단계 설계의 핵심 요소들이 이미 이 방향이었음을 회고:
+- `recommendedRouting` 5단계 (`AUTO` → `AGENT_REVIEW` → `MANAGER_REVIEW` 등) — LLM 응답이 *얼마나 자동 처리해도 안전한가* 의 명시
+- `CLAIM` 카테고리 위임 — 보상 결정은 사람에게
+- `missingInfo` 명시 — 정보 부족 시 자동 처리 차단
+
+3단계 `STREAMING_PROMPT` 분리도 같은 패턴 — *Structured ↔ Streaming 의 구조 분리 가 충돌 방지*. 4단계 `@ControllerAdvice` 글로벌 에러 핸들러도 *예외를 표준 형태로 처리* 하는 구조.
+
+→ **AI 신뢰는 *모델 신뢰* 가 아니라 *구조 신뢰* 다.** 시스템이 잘못된 응답을 받아도 안전하게 처리할 수 있는 구조.
+
+**(3) "프롬프트 튜닝 리소스" → *자동화된 PromptLab + LLM-as-Judge 가설***
+
+2단계에 직접 구현한 `PromptLabController` 다축 메트릭이 한 가지 답:
+- 시나리오 × 프롬프트 변형 × 반복 호출을 API 한 번으로 자동화 → 비용 ↓
+- `categoryConsistency` / `echoRate` 등 분포 메트릭으로 정량 비교 가능
+
+다만 메트릭 자체의 한계(2단계 ablation 발견: 의미적 위반 못 잡음 + echo 오탐) → **LLM-as-Judge** (응답을 별도 LLM 으로 평가) 가 다음 라운드 후속 과제.
+
+또 4단계 advisor 측정에서 발견 — **운영 비용의 95%가 system prompt 토큰** → 프롬프트 튜닝은 *길이 관리* 도 함께 고민해야 함. 단순히 *"좋은 응답을 만드는 프롬프트"* 가 아니라 *"좋은 응답을 만드는 가장 짧은 프롬프트"* 가 운영 관점의 목표.
+
+---
+
+### 본 라운드의 가장 큰 발견 — 한 줄로
+
+> **AI 시스템의 신뢰성은 *모델 응답* 이 아니라 *시스템 구조* 에서 온다.**
+> `summary`/`customerMessage` 청자 분리, `CORE_GUARDRAILS` 공유, `STREAMING_PROMPT` 분리, `*_REVIEW` 라우팅, `@ControllerAdvice` — 이 모든 결정의 공통점은 *"LLM 이 어떻게 답하든 시스템이 안전한 흐름을 보장한다"*.
+
+---
+
+### Round 2 (Tool Calling) 연결 아이디어
+
+본 1단계 설계 자산이 Round 2 에서 어떻게 활용될지:
+
+| 1단계 자산 | Round 2 활용 |
+|---|---|
+| `Intent` 26개 enum | `@Tool` 메서드 1:1 매핑 키 (`DELIVERY_LOCATION` → 배달 추적 API, `ORDER_CANCEL` → 주문 취소 API) |
+| `missingInfo.isEmpty()` | Tool 호출 가능 신호. 비어 있지 않으면 재질의 (UI 또는 chained call) |
+| `recommendedRouting=DELIVERY_PARTNER`/`STORE_CONFIRMATION` | 외부 시스템 Tool 호출 분류 |
+| `SupportService` 의 `ChatClient` 캐싱 | Tool 등록 누적 bug 사전 회피 (4단계 발견의 `ChatClient.builder(chatModel)` 패턴 재사용) |
+| `PerformanceLoggingAdvisor` | Tool 호출 비용도 함께 측정 |
+| `CORE_GUARDRAILS` | Tool 호출 응답에도 동일한 [금지] 가드레일 적용 |
+
+본 라운드의 발견 *"AI 신뢰는 구조 신뢰"* 가 Round 2 에서 검증될 자리:
+- Tool 호출 결과 검증 (LLM 이 잘못된 Tool 호출하면?)
+- Tool 결과의 자동 처리 vs 사람 검토 분기 (`recommendedRouting` 패턴 재사용)
+- 외부 시스템 실패 시 fallback (4단계 `@ControllerAdvice` 의 `TransientAiException` 패턴을 외부 API 호출에도 확장)
 
 ---
 
