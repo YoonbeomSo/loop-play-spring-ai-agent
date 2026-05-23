@@ -66,21 +66,14 @@ public class OrderTools {
     }
 
     @Tool(description = """
-            ★ 고객 메시지에 '취소'·'안 받을게요'·'주문 없던 일로' 같은 취소 의도가 있고 주문번호(YYYY-XXXX)가 있으면
-              직접 "취소해드리겠습니다"라고 답하지 말고 반드시 이 도구를 먼저 호출하십시오.
-              취소 가능 여부는 이 도구의 Outcome 으로만 판단합니다.
-
             주문 취소 요청을 처리합니다.
             취소 가능 조건: CREATED 또는 ACCEPTED 상태에서만 가능 (조리 시작 전).
             취소 불가: COOKING 이후 상태 (조리 시작됨·배달 중·배달 완료) — Outcome NOT_CANCELABLE 반환.
             멱등성: 이미 취소된 주문(CANCELED)을 다시 요청해도 에러가 아닌 Outcome ALREADY_CANCELED 를 반환합니다.
                     같은 주문에 cancelOrder 를 여러 번 호출해도 한 번만 취소된 것과 동일한 결과를 줍니다.
             결과 타입: CancelOrderResult — outcome 필드(CANCELED / ALREADY_CANCELED / NOT_CANCELABLE / NOT_FOUND)
-                       와 사람이 읽기 쉬운 message 가 함께 옵니다. 각 Outcome 별 답변 패턴:
-              - CANCELED: "주문이 취소되었습니다" 안내.
-              - ALREADY_CANCELED: "이미 취소된 주문입니다" 안내. 중복 처리 안 함.
-              - NOT_CANCELABLE: "조리가 시작되어 취소가 어렵습니다" 안내. 함부로 약속 X.
-              - NOT_FOUND: "해당 주문번호를 찾을 수 없습니다" 안내.
+                       와 사람이 읽기 쉬운 message 가 함께 옵니다.
+            호출 시점: 고객이 '주문 취소'·'주문 안 받을게요'·'환불해 주세요' 등을 명시할 때 사용합니다.
             """)
     public CancelOrderResult cancelOrder(
             @ToolParam(description = "취소할 주문의 번호 (예: '2024-1239'). 'YYYY-XXXX' 형식의 문자열.")
