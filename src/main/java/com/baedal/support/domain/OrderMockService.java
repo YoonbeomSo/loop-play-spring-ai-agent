@@ -53,38 +53,64 @@ public class OrderMockService {
                 null,
                 OrderStatus.CREATED));
 
-        // TODO [1단계] 아래 시나리오용 Mock 데이터 4건을 추가하라.
-        //
-        // 왜 직접 추가해야 하는가?
-        //   2단계(멱등성) / 3단계(description 실험)에서 네 가지 Outcome 경로를 모두 관찰하려면
-        //   각 상태의 주문이 필요하다. "어떤 데이터가 있어야 이 Tool을 검증할 수 있는가?"를
-        //   직접 판단하는 훈련이다.
-        //
-        // 추가해야 할 4건:
-        //
-        //   1) 2024-1236: OrderStatus.DELIVERED — 배달 완료된 주문
-        //      용도: "이미 배달 완료된 주문의 상태 조회" 시나리오
-        //
-        //   2) 2024-1237: OrderStatus.COOKING — 조리 중(취소 불가) 주문
-        //      용도: cancelOrder → NOT_CANCELABLE 경로 검증
-        //
-        //   3) 2024-1238: OrderStatus.CANCELED — 사전에 취소된 주문
-        //      용도: cancelOrder → ALREADY_CANCELED 경로 검증 (멱등성 핵심)
-        //
-        //      ⚠️ 중요 — order.cancel(...) 호출 누락 시 2단계 멱등성 실험 실패:
-        //        Order 객체를 CANCELED 상태로 만들기만 하면 canceledReason/canceledAt 필드가
-        //        null로 남는다. 이 상태에서 cancelOrder Tool이 ALREADY_CANCELED를 반환해도
-        //        LLM에게 "왜 취소됐는지" 정보가 없어 자연어 응답이 어색해진다.
-        //        반드시 아래처럼 Order 생성 직후 cancel() 메서드를 호출하라:
-        //
-        //          Order o1238 = Order.of("2024-1238", ..., OrderStatus.CANCELED, ...);
-        //          o1238.cancel("고객 요청", now.minusMinutes(8));   // ← 필수
-        //          save(o1238);
-        //
-        //   4) 2024-1239: OrderStatus.ACCEPTED — 사장님 수락 직후(취소 가능)
-        //      용도: cancelOrder → CANCELED 경로 검증 (수업 중 라이브 데모와 동일)
-        //
-        // 각 주문의 메뉴/매장명/주소는 자유롭게 정하되, 한국어 배달 톤을 유지하라.
+        // 2024-1236: 배달 완료 — 시나리오 4 (cancelOrder → NOT_CANCELABLE) 용
+        save(new Order(
+                "2024-1236",
+                "도미노피자 역삼점",
+                List.of(
+                        new OrderItem("페퍼로니 피자 L", 1, 27_900),
+                        new OrderItem("콜라 500ml", 2, 2_500)
+                ),
+                now.minusMinutes(75),
+                now.minusMinutes(15),
+                "서울시 강남구 역삼로 168",
+                null,
+                OrderStatus.DELIVERED));
+
+        // 2024-1237: 조리 중 — cancelOrder → NOT_CANCELABLE 보조 검증용
+        save(new Order(
+                "2024-1237",
+                "김밥천국 강남점",
+                List.of(
+                        new OrderItem("참치김밥", 2, 5_000),
+                        new OrderItem("라면", 1, 4_500)
+                ),
+                now.minusMinutes(10),
+                now.plusMinutes(25),
+                "서울시 강남구 강남대로 396",
+                null,
+                OrderStatus.COOKING));
+
+        // 2024-1238: 사전 CANCELED — 2단계 멱등성 (ALREADY_CANCELED) 핵심
+        // ⚠️ cancel() 호출하지 않으면 canceledReason/canceledAt 가 null → 멱등성 실험 의미 X
+        Order o1238 = new Order(
+                "2024-1238",
+                "BBQ치킨 강남점",
+                List.of(
+                        new OrderItem("황금올리브 치킨", 1, 22_000),
+                        new OrderItem("콜라 1.25L", 1, 3_000)
+                ),
+                now.minusMinutes(30),
+                now.plusMinutes(5),
+                "서울시 강남구 봉은사로 213",
+                null,
+                OrderStatus.CANCELED);
+        o1238.cancel("고객 요청", now.minusMinutes(25));   // 필수
+        save(o1238);
+
+        // 2024-1239: 사장님 수락 직후 — 2단계 (B) cancelOrder → CANCELED 정상 경로
+        save(new Order(
+                "2024-1239",
+                "맥도날드 강남점",
+                List.of(
+                        new OrderItem("빅맥 세트", 1, 9_500),
+                        new OrderItem("맥너겟 6조각", 1, 3_500)
+                ),
+                now.minusMinutes(3),
+                now.plusMinutes(40),
+                "서울시 강남구 테헤란로 152",
+                null,
+                OrderStatus.ACCEPTED));
 
         log.info("OrderMockService seeded — {}건", orders.size());
     }

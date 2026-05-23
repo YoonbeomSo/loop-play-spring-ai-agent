@@ -1,4 +1,4 @@
-package com.baedal.support;
+package com.baedal.support.advisor;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClientRequest;

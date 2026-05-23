@@ -1,5 +1,9 @@
-package com.baedal.support;
+package com.baedal.support.service;
 
+import com.baedal.support.advisor.PerformanceLoggingAdvisor;
+import com.baedal.support.dto.SupportResponse;
+import com.baedal.support.prompt.BaedalPrompt;
+import com.baedal.support.tool.OrderTools;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.client.ChatClient;
@@ -24,16 +28,18 @@ public class SupportService {
             ChatClient.Builder structuredBuilder,
             ChatClient.Builder streamingBuilder,
             PerformanceLoggingAdvisor performanceAdvisor,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            OrderTools orderTools
     ) {
         this.structuredChatClient = structuredBuilder
                 .defaultSystem(BaedalPrompt.SYSTEM_PROMPT)
                 .defaultAdvisors(performanceAdvisor)
+                .defaultTools(orderTools)   // Round 2 — Structured Output 응답에도 Tool 사용 가능
                 .build();
         this.streamingChatClient = streamingBuilder
                 .defaultSystem(BaedalPrompt.STREAMING_PROMPT)
                 .defaultAdvisors(performanceAdvisor)
-                .build();
+                .build();   // streaming 은 Tool 등록 안 함 (자유 텍스트 챗봇용)
         this.objectMapper = objectMapper;
     }
 
