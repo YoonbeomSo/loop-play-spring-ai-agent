@@ -137,7 +137,7 @@ Spring AI 의 Tool execution 은 chain *내부* 에서 자동 처리 → 1차 + 
 "Spring AI 1.0으로 배달 주문 취소 Tool을 만들어줘. @Tool 어노테이션을 써야 해."
 ```
 
-### GPT-5.5 가 생성한 코드 구조 (원본: `reports/week2/stage4/ai-generated-original/`)
+### GPT-5.5 가 생성한 코드 구조
 
 ```
 ai/DeliveryAiController         POST /ai/delivery/chat
@@ -422,11 +422,9 @@ public record CancelOrderResult(
 
 ---
 
-## 부록 — 원본 코드 보존
+## 부록 — 원본 코드 vs 우리 라운드 코드 1:1 비교
 
-`reports/week2/stage4/ai-generated-original/` — GPT-5.5 가 생성한 원본 코드 그대로 보존.
-
-자체 검증 시 우리 라운드 코드 (`src/main/java/com/baedal/support/`) 와 1:1 비교 가능:
+> GPT-5.5 원본 소스는 repo 에서 제외 (`.gitignore`). 본인 로컬에만 보관. 아래는 비교 요약.
 
 | GPT-5.5 코드 | 우리 라운드 코드 | 차이 |
 |---|---|---|

@@ -550,7 +550,6 @@ ChatClient client = ChatClient.builder(chatModel)   // fresh, 누적 없음
 ### 상세 보고서
 
 - [Observability + AI 코드 리뷰](reports/week2/stage4/observability-and-ai-review-report.md) — Tool 왕복 4단계 흐름 + 토큰 출처 분해 + GPT-5.5 결함 3가지 개선 코드 + Round 1·2 전체 학습 흐름 종합
-- [GPT-5.5 원본 코드 보존](reports/week2/stage4/ai-generated-original/) — 비교 검증용
 
 ---
 
