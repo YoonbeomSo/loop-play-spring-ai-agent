@@ -52,8 +52,7 @@ public class ChatMemoryConfig {
     //     (서버 재시작 / 멀티 인스턴스 / 감사 요구 / 개인정보 보존 기간 중 어느 것이 먼저 깨지는가?)
     @Bean
     public ChatMemoryRepository chatMemoryRepository() {
-        // TODO: InMemoryChatMemoryRepository 인스턴스 반환
-        return null;
+        return new InMemoryChatMemoryRepository();
     }
 
     // TODO [1단계-C] ChatMemory Bean을 등록하라.
@@ -70,8 +69,10 @@ public class ChatMemoryConfig {
     //   - 두 전략의 장단점 표를 작성하라.
     @Bean
     public ChatMemory chatMemory(ChatMemoryRepository repository) {
-        // TODO: MessageWindowChatMemory를 MAX_MESSAGES 크기로 빌드해 반환
-        return null;
+        return MessageWindowChatMemory.builder()
+                .chatMemoryRepository(repository)
+                .maxMessages(MAX_MESSAGES)
+                .build();
     }
 
     // TODO [1단계-D] MessageChatMemoryAdvisor Bean을 등록하라.
@@ -88,7 +89,8 @@ public class ChatMemoryConfig {
     //   - 만약 order 순서를 바꾼다면 어떤 관찰 가능한 차이가 생기는가?
     @Bean
     public MessageChatMemoryAdvisor messageChatMemoryAdvisor(ChatMemory chatMemory) {
-        // TODO: MessageChatMemoryAdvisor를 order(10)으로 빌드해 반환
-        return null;
+        return MessageChatMemoryAdvisor.builder(chatMemory)
+                .order(10)
+                .build();
     }
 }

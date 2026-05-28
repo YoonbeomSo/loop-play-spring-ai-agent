@@ -36,31 +36,23 @@ public class AssistantController {
 
     private final ChatClient assistantChatClient;
 
-    // TODO [1단계-H] X-Session-Id 헤더를 받아 Memory에 연결하라.
-    //
-    // 요구사항:
-    //   1) 메서드 파라미터에 다음을 추가:
-    //         @RequestHeader(value = "X-Session-Id", defaultValue = "default") String sessionId
-    //   2) log.info("[Assistant] sessionId={}, message={}", sessionId, req.message()); 로 관찰 포인트 확보
-    //   3) 이 호출에 한해 Memory가 사용할 conversationId를 지정:
-    //         .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
-    //
-    // 왜 "이 호출에 한해" 지정하는가:
-    //   - 같은 ChatClient Bean을 여러 세션이 공유한다.
-    //   - 요청마다 sessionId가 다르므로 고정값으로 둘 수 없다.
-    //   - .advisors(...) 는 prompt() 체인에만 적용되어 스레드 간섭이 없다.
-    //
-    // 설계 결정 질문 (README):
-    //   - defaultValue = "default" 정책의 위험은 무엇인가?
-    //     (힌트: 헤더를 안 보낸 여러 고객의 대화가 섞여 버린다 = 심각한 개인정보 사고)
-    //   - 프로덕션에서 세션 식별의 실무 대안(쿠키 / JWT 클레임 / URL 경로)은 각각 어떤 장단점이 있는가?
+    /**
+     * X-Session-Id 헤더로 고객 세션을 식별하고 ChatMemory 의 conversationId 로 전달.
+     * <p>
+     * defaultValue="default" 는 개발 편의용 — 헤더 없는 여러 클라이언트가 같은 세션을 공유하므로
+     * 프로덕션에선 400 응답으로 바꿔야 한다. 시나리오 5(보안 사고 시뮬레이션) 에서 직접 재현.
+     * <p>
+     * .advisors(...) 를 호출 체인에 두는 이유는 ChatClient 빈을 모든 세션이 공유하기 때문 —
+     * 세션별 conversationId 는 요청 단위로만 의미가 있다.
+     */
     @PostMapping
-    public String ask(@Valid @RequestBody ChatRequest req) {
-        // TODO: @RequestHeader로 sessionId를 받고, .advisors(...) 로 conversationId를 주입하라.
+    public String ask(@Valid @RequestBody ChatRequest req,
+                      @RequestHeader(value = "X-Session-Id", defaultValue = "default") String sessionId) {
+        log.info("[Assistant] sessionId={} message={}", sessionId, req.message());
         return assistantChatClient
                 .prompt()
                 .user(req.message())
-                // TODO: .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
+                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
                 .call()
                 .content();
     }
