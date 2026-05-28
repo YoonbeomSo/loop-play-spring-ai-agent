@@ -1,4 +1,4 @@
-package com.baedal.support.memory;
+package com.baedal.support.config;
 
 /**
  * 3주차 — JDBC Chat Memory 대안 구현 예시 (문서용).

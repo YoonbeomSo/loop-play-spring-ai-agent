@@ -1,4 +1,4 @@
-package com.baedal.support.memory;
+package com.baedal.support.config;
 
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -21,8 +21,8 @@ import org.springframework.context.annotation.Configuration;
  * <p>세 Bean이 모두 등록되어야 Memory가 "자동으로" 동작한다.
  * 학생은 각 Bean을 구현하면서 <b>왜 이 값/전략을 선택했는지</b>를 README에 기록해야 한다.
  *
- * @see SessionController     Memory 상태 확인용 엔드포인트
- * @see JdbcChatMemoryExample JDBC 저장소로 전환하는 방법 (3단계 숙제)
+ * @see com.baedal.support.controller.SessionController Memory 상태 확인용 엔드포인트
+ * @see JdbcChatMemoryExample                            JDBC 저장소로 전환하는 방법 (3단계 숙제)
  */
 @Configuration
 public class ChatMemoryConfig {

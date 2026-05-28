@@ -1,4 +1,4 @@
-package com.baedal.support.memory;
+package com.baedal.support.controller;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
