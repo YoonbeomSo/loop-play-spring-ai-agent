@@ -41,6 +41,17 @@ public class PerformanceLoggingAdvisor implements CallAdvisor {
                     truncate(extractLastUserContent(request), 100));
         }
 
+        // [프롬프트 전문] — Memory 가 끼워 넣은 이전 대화를 눈으로 확인 (DEBUG, 운영 시 PII·토큰 때문에 끔)
+        // 2회차부터 SYSTEM 뒤에 이전 USER/ASSISTANT 가 붙는다 → Memory 작동의 직접 증거
+        if (log.isDebugEnabled() && request.prompt() != null) {
+            var instructions = request.prompt().getInstructions();
+            log.debug("[LLM-PROMPT] {} messages ↓", instructions.size());
+            for (int i = 0; i < instructions.size(); i++) {
+                var m = instructions.get(i);
+                log.debug("  #{} [{}] {}", i, m.getMessageType(), truncate(m.getText(), 300));
+            }
+        }
+
         ChatClientResponse response = chain.nextCall(request);
         long elapsedMs = System.currentTimeMillis() - start;
 
