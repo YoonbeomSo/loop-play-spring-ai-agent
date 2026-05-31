@@ -24,6 +24,11 @@ curl -X POST localhost:8080/api/v1/support \
 | Round 2 | 3단계 · Tool description A/B/C 정량 비교 | ✅ | `getDeliveryStatus` 3 variants × 5회 (A 5/5, B 3/5, C 4/5) + description 두 역할 발견 |
 | Round 2 | 4단계 · Observability + AI 코드 리뷰 | ✅ | Tool 왕복 4단계 + 토큰 2배 측정 + GPT-5.5 코드 결함 3가지 분석 |
 | Round 2 | 공통 · 학습 기록 | ✅ | 배운 것 11가지 + 의문점 3가지 + Round 3 (Memory) 아이디어 3가지 |
+| **Round 3** | 1단계 · Memory 3레이어 + 세션 분리 | ✅ | `ChatMemoryConfig` 3빈 + `SessionController` + `X-Session-Id` 세션 분리 + 시나리오 5종 (세션 격리↔누출) |
+| Round 3 | 2단계 · `MAX_MESSAGES` 정량 비교 + 회귀 ablation | ✅ | 2/20/MAX_VALUE 토큰·지시대명사 + `[대화 맥락 규칙]` 제거(Tool 20→80%) + temperature 검증("모델 탓" 반박) |
+| Round 3 | 3단계 · InMemory vs JDBC 영속화 | ✅ | JDBC 전환 함정 5종 + 재시작 실험 (JDBC 4건↔InMemory 0건) + 의사결정 트리 |
+| Round 3 | 4단계 · Observability + AI 코드 리뷰 | ✅ | 10턴 토큰 3559→4093 + Memory 포함 2회차 프롬프트 전문 + codex 결함 3종 |
+| Round 3 | 공통 · 학습 기록 | ✅ | 배운 것 3 + 의문점 + Round 4 (RAG) 아이디어 |
 
 ---
 
@@ -620,3 +625,158 @@ AWS Summit 의 WhaTap Observability 발표를 보고 든 생각 — 기존 시�
 이번 라운드에서 Tool 호출 한 번이 토큰 2배가 든다는 걸 봤는데, Memory 가 붙으면 매 turn 마다 *과거 대화 전체* 가 같이 전송될 것 같다. 그럼 대화가 길어질수록 비용이 빠르게 커질 텐데, 그렇다고 오래된 대화를 잘라내면 *"아까 취소한 주문 어떻게 됐어?"* 같은 질문에 시스템이 그 사실 자체를 잊어버려서 멱등성도 깨질 것 같다. **비용을 줄이려는 시도가 멱등성을 깨는 자리** 가 어디인지 찾고 싶다.
 
 ---
+
+# Round 3 — 대화 맥락 관리와 메모리 설계
+
+> 한 줄 메시지: **대화 메모리는 "있으면 좋은 기능"이 아니라 상담 에이전트의 전제 조건이다.** Memory 없는 에이전트는 "그거 취소해줘"의 *그거* 를 모르는 단발 챗봇일 뿐.
+
+## 1단계 — Memory 3레이어 + 세션 분리
+
+`ChatMemoryConfig` 3빈 (`InMemoryChatMemoryRepository` / `MessageWindowChatMemory(20)` / `MessageChatMemoryAdvisor(order=10)`) + `SessionController` (`/api/v1/session` — 메시지 조회·clear·세션 목록) + `AssistantController` 에 `X-Session-Id` 헤더 → `ChatMemory.CONVERSATION_ID` 주입.
+
+### 시나리오 5종 (`POST /api/v1/assistant`)
+
+| # | 의도 | 기대 | 실제 | 판정 |
+|---|---|---|---|:---:|
+| S1 | Memory 기본 (`live-demo`, 2턴) | "그거"→직전 1234 | "그거"→1234, USER×2/ASSISTANT×2 누적 | ✅ |
+| S2 | 지시 대명사 우선순위 (1234→1235→"아까 그거") | 마지막(1235) | **1234**(처음) + Tool JSON 텍스트 누출 | ⚠️ |
+| S3 | **세션 분리 ★** (A=1234, B=1239, A="그거") | A·B 0 오염 | A엔 1234만 / B엔 1239만, "그거"→1234 | ✅ |
+| S4 | clear 후 망각 | clear 후 빈값 | `[]` + "주문번호 알려주세요" 되물음 | ✅ |
+| S5 | **default 폴백 보안 ★** (헤더 없이 2명) | 대화 섞임 | 고객2 에게 고객1 의 1234 노출 | ✅ (사고 재현) |
+
+→ **세션 분리 평가축은 S3(격리)↔S5(누출) 대비로 충족.** 같은 코드인데 `X-Session-Id` 헤더 유무가 개인정보 사고를 가른다 — *"테스트(S3)는 통과하고 운영(S5)에서 터지는 사고"*.
+
+### 핵심 발견
+
+1. **Memory 검증과 Tool 검증은 별개 축** — S1 에서 "그거"→1234 는 풀렸지만(Memory ✅), 그 1234 로 Tool 은 안 부르고 위치를 환각했다(Tool ✗). Memory 작동 ≠ Tool 호출.
+2. **Tool 호출률 정량 측정** — 동일 질문 10회: chat(memory X) 2/10 vs assistant(memory O) 3/10. → **memoryAdvisor 가 Tool 을 깨뜨린다는 가설 기각** (당초 단발 비교로 "범인"이라 단정했다가 표본 늘려 정정).
+3. **"역삼역" 응답 ≠ Tool 호출** — 환각으로도 역삼역이 나옴. 결정적 지표는 `[Tool]` 로그뿐 (Round 2 3단계에서 쓴 지표의 자기수정).
+
+### 상세 보고서
+
+- [Memory + 세션 분리](reports/week3/stage1/memory-and-session-report.md) — 시나리오 5종 raw 응답 + Memory 상태 JSON + 가설 정정 과정 + 설계 결정(MAX_MESSAGES/order/default 폴백/세션 식별 4전략)
+
+## 2단계 — `MAX_MESSAGES` 정량 비교 + 회귀 ablation
+
+### `MAX_MESSAGES` 2 / 20 / MAX_VALUE (평가축 ★)
+
+| 값 | 입력 토큰 추세 | 먼 지시대명사(`2024-1237` 복창) |
+|---|---|:---:|
+| **2** | ~3600 **평평** (누적 안 됨) | ✗ 되묻기 |
+| **20** | 3634→4090 **우상향** 후 상한 | ✅ |
+| **MAX_VALUE** | 3636→4093 **우상향** | ✅ |
+
+→ 윈도우가 비용↔맥락 trade-off 를 조절. **2는 토큰 싸지만 맥락 손실, 20+는 토큰 쓰는 대신 맥락 유지. 20 이 sweet spot.**
+
+### 회귀 ablation — `[대화 맥락 사용 규칙]` 이 Tool 을 억제했다
+
+| 조건 | Tool 호출 (assistant 10회) |
+|---|---:|
+| 5줄(규칙 있음) + temp 0.3 | 3/10 |
+| 0줄(규칙 제거) + temp 0.3 | **9/10** |
+| 0줄 + temp 0.0 | **10/10** |
+
+→ prompt 한 블록 제거 + temperature 만으로 **20%→100%**. 모델(Q4 7B)은 그대로 — *Tool 불안정은 "모델 탓"이 아니라 prompt·temperature 라는 통제 변수였다.*
+
+### 핵심 발견
+
+1. **prompt 는 전역 확률 분포** — 손대지 않은 Tool 호출을 다른 섹션이 흔든다.
+2. **지표 오염 2종 추가** — `1234`(system prompt 예시값)·`9999-0001`(NOT_FOUND 라 LLM 무시) → 깨끗한 측정은 `2024-1237`(유효+비예시).
+3. **"모델 탓" 반박** — 통제 변수 고정 전 결론은 성급. (Round 1·2 보고서는 정정하지 않고 사고 진화를 새 보고서로 기록.)
+
+### 상세 보고서
+
+- [MAX_MESSAGES 정량 비교](reports/week3/stage2/max-messages-ablation-report.md) — 토큰·지시대명사 + orderId 지표 오염
+- [`[대화 맥락 규칙]` ablation](reports/week3/stage2/context-rule-ablation-report.md) — 회귀 원인 규명 (5줄/4줄/0줄)
+- [temperature 테스트](reports/week3/stage2/temperature-tool-calling-report.md) — "모델 탓" 반박
+
+## 3단계 — InMemory vs JDBC 영속화
+
+`spring-ai-starter-model-chat-memory-repository-jdbc` + h2. `@Profile("!jdbc")` 로 InMemory↔JDBC 분리.
+
+### 재시작 실험 (평가축 ★)
+
+동일 2턴 대화 후 **서버 재시작**:
+
+| 저장소 | 재시작 전 | 재시작 후 |
+|---|---:|---:|
+| **JDBC (`h2:file`)** | 4건 | **4건 유지** ✅ |
+| **InMemory** | 4건 | **0건 소실** ❌ |
+
+→ JDBC 는 대화 맥락("그거"→1234)까지 복원. InMemory 는 배포 한 번에 전체 증발.
+
+### 의사결정 트리
+
+```
+Q1. 재시작 시 대화가 사라져도 되는가? → YES: InMemory / NO: Q2
+Q2. 멀티 인스턴스 배포인가?            → YES: JDBC/Redis / NO: Q3
+Q3. 감사·법적 보존이 필요한가?         → YES: JDBC / NO: InMemory + TTL
+```
+
+### 핵심 발견 — 함정 5종 연쇄
+
+강의·starter 의 `h2:mem + initialize-schema: embedded` 로는 **재시작 실험이 구조적으로 불가능**. 5개를 차례로 풀어야 동작:
+
+1. h2 classpath → 기본 프로필도 자동구성 충돌 → `exclude`
+2. exclude 가 jdbc 프로필에 상속 → `exclude: []` override
+3. Spring AI 1.0.0 에 `schema-h2.sql` 없음 → `platform: postgresql`
+4. `h2:mem` 은 재시작 소실 → `h2:file`
+5. file 은 embedded 판정 밖 → `initialize-schema: always`
+
+(영속화 = 개인정보 처리자가 되는 결정 — content 평문 저장·TTL 부재가 우리 현재 위반점.)
+
+### 상세 보고서
+
+- [JDBC 영속화 + 재시작 + 의사결정 트리](reports/week3/stage3/jdbc-persistence-report.md) — 함정 5종 상세 + 테이블 스키마(TOOL 미저장) + 개인정보 리스크
+
+## 4단계 — Observability + AI 코드 리뷰
+
+### 토큰 누적 + Memory 주입
+
+10턴 입력 토큰 **3559 → 4093** 단조 증가(턴당 ~53), T8~10 에서 ~4090 정체(MAX=20 윈도우 상한). 2회차 프롬프트 전문에서 **SYSTEM 앞뒤로 1회차 USER+ASSISTANT 가 주입**된 것 확인 — "그거"→1234 해석의 실물. (TOOL 메시지는 미적재.)
+
+### AI 코드 리뷰 — codex 멀티턴 챗봇
+
+codex 에 순진한 프롬프트로 받은 코드(우리 프로젝트 밖에서 생성). **Round 2 GPT-5.5 보다 완성도 높음** — conversationId 세션분리·maxMessages=20·@Valid·ChatClient 빈 1회를 이미 갖춤. 남은 결함 3종이 *운영에서야 드러나는 판단*:
+
+| # | 결함 | 우리 Round 3 실증 |
+|---|---|---|
+| 1 | 세션 `"default"` 폴백 (conversationId 옵션 body) | 1단계 S5 누출 |
+| 2 | InMemory 영속성 없음 (repository 미지정) | 3단계 재시작 4건→0건 |
+| 3 | Observability 부재 (토큰/시간 로깅 없음) | 4단계 토큰 3559→4093 추적 불가 |
+
+→ AI 코드 결함이 *문법 오류*에서 *"운영에서야 터지는 미묘한 판단"*으로 이동. **실패를 직접 재현·측정해 본 사람만이 이 결함을 짚을 수 있다.**
+
+### 상세 보고서
+
+- [Observability + AI 코드 리뷰](reports/week3/stage4/observability-and-ai-review-report.md) — 10턴 토큰표 + 2회차 프롬프트 전문 + codex 결함 3종 개선 코드
+
+---
+
+## 공통 — 학습 기록
+
+### 내가 배운 것
+
+**1. prompt 는 전역 확률 분포다 — 한 섹션이 다른 섹션을 흔든다**
+
+`[대화 맥락 사용 규칙]` 5줄이 prompt 에 있을 때 Tool 호출률이 20%, 빼니 80%였다. 지시 대명사 해결을 도우려던 규칙이 *손대지도 않은* Tool 호출을 억제한 것. prompt 한 블록이 그 블록만의 효과로 끝나지 않고 **모델의 전체 응답 확률을 흔든다**. (ablation 으로 확정) — Round 2 배운점 *"prompt 는 사이드이펙트에 예민하다"* 가 Memory 라운드에서 더 강하게 재현됐다.
+
+**2. 응답 텍스트를 측정 지표로 쓰면 오염된다 — 세 번 데였다**
+
+Tool 호출됐나 보려고 "역삼역"이 응답에 있나 셌는데, Tool 안 불러도 환각으로 역삼역이 나왔다. 지시 대명사 보려고 "1234" 복창을 봤더니 system prompt 예시값이라 Memory 가 비어도 1234가 나왔다. 안 쓰는 번호 `9999-0001` 로 바꿨더니 이번엔 NOT_FOUND 라 LLM 이 무시했다. → **응답 텍스트는 환각·예시·에러에 오염된다. 믿을 건 `[Tool]` 로그뿐.** Round 2 3단계에서 "역삼역 포함 횟수"를 성공 지표로 썼던 게 사실 과대평가였다는 자기수정.
+
+**3. "모델 탓"은 통제 변수를 고정하기 전엔 성급한 결론**
+
+Tool 이 불안정하길래 "qwen2.5 가 약해서"라고 결론냈는데, prompt(5줄 제거) + temperature(0.0) 둘만 조정하니 *같은 모델로* 100%가 됐다. 모델은 그대로인데 20%→100%. **변수를 다 고정하기 전에 모델을 탓한 게 게을렀다.** Round 2 의문점 b *"모델 한계인가 prompt 한계인가"* 에 대한 잠정 답 — 적어도 이 케이스는 prompt·temperature 였다.
+
+### 의문점
+
+**Tool 응답을 Memory 에 넣으면 LLM 행동이 어떻게 달라질까?**
+
+지금은 USER/ASSISTANT 만 저장하고 TOOL 메시지는 안 남긴다. 그래서 "그거"를 풀려면 ASSISTANT 응답 본문에 orderId 가 있어야 한다. 만약 Tool 응답(JSON 전체)까지 Memory 에 넣으면 — 맥락이 더 정확해질까, 아니면 토큰만 폭증하고 LLM 이 raw JSON 에 휘둘릴까? Spring AI 가 USER/ASSISTANT 만 적재하는 게 *기본값*인 이유를 직접 깨보고 싶다.
+
+### Round 4 (RAG) 아이디어
+
+**Memory + RAG advisor 공존**
+
+Memory 는 "그 주문" 같은 세션 맥락, RAG 는 "비 오는 날 배달 지연 보상 정책" 같은 지식. 두 advisor 가 체인에 같이 붙으면 *"아까 그 주문, 비 와서 늦었는데 보상 되나요?"* 같은 질문을 커버할 수 있을 듯하다. order 순서(Memory 먼저냐 RAG 먼저냐)가 설계 포인트일 것 같다 — 3단계에서 advisor order(memory 10 < performance 100)를 직접 본 게 여기로 이어진다.
