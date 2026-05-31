@@ -82,6 +82,24 @@ CREATE INDEX IF NOT EXISTS ..._CONVERSATION_ID_TIMESTAMP_IDX
 - **TOOL 메시지는 저장되지 않는다** — `MessageChatMemoryAdvisor` 가 USER/ASSISTANT 만 적재 (1단계 관찰과 일치).
   그래서 "그거"→orderId 재해석은 ASSISTANT 응답 본문에 orderId 가 포함돼야 가능하다.
 
+## H2 Console 쿼리 결과
+
+`/h2-console` 접속 (JDBC URL `jdbc:h2:file:./data/baedal;MODE=PostgreSQL`, user `sa`, pw 없음) 후
+`SELECT * FROM SPRING_AI_CHAT_MEMORY ORDER BY conversation_id, "timestamp"`:
+
+| conversation_id | content | type | timestamp |
+|---|---|---|---|
+| restart-jdbc | 2024-1234 배달 어디쯤이에요? | USER | 2026-05-31 12:22:29.124 |
+| restart-jdbc | 주문 2024-1234는 현재 배달 중이며 라이der가 역삼역 사거리 부근에 있습니다. 약 15분 내 도착 예정이에요. | ASSISTANT | …29.125 |
+| restart-jdbc | 그거 취소 가능한가요? | USER | …29.126 |
+| restart-jdbc | 주문 2024-1234는 현재 배달 중이라 취소가 어렵습니다. 매장과 직접 확인해 보시는 것이 좋을 것 같습니다. … | ASSISTANT | …29.127 |
+
+→ `/session/{id}/messages`(type+content)에 안 보이던 **`conversation_id`·`timestamp` 컬럼까지 직접 확인**:
+
+- **`timestamp` 밀리초 순차** (124→125→126→127, 1ms 간격) — *재시작 후에도 이 4건이 그대로 보존* = file 영속의 직접 증거 (재시작 실험과 동일 데이터).
+- **`type` 은 USER/ASSISTANT 만** — schema CHECK 엔 `SYSTEM`/`TOOL` 도 허용되지만 실제 적재는 둘뿐 (위 관찰과 일치).
+- **`conversation_id` = restart-jdbc 단일** — 세션 단위로 분리 저장됨 (다른 세션이면 다른 conversation_id 행).
+
 ## 의사결정 트리 — InMemory vs JDBC
 
 ```

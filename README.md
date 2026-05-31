@@ -510,7 +510,7 @@ Q3. 감사·법적 보존이 필요한가?         → YES: JDBC / NO: InMemory 
 
 ### 상세 보고서
 
-- [JDBC 영속화 + 재시작 + 의사결정 트리](reports/week3/stage3/jdbc-persistence-report.md) — 함정 5종 상세 + 테이블 스키마(TOOL 미저장) + 개인정보 리스크
+- [JDBC 영속화 + 재시작 + 의사결정 트리](reports/week3/stage3/jdbc-persistence-report.md) — 함정 5종 상세 + 테이블 스키마(TOOL 미저장) + **H2 Console 쿼리 결과**(conversation_id·timestamp 컬럼) + 개인정보 리스크
 
 ## 4단계 — Observability + AI 코드 리뷰
 
