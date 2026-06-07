@@ -27,8 +27,8 @@ import org.springframework.context.annotation.Configuration;
  *   QuestionAnswerAdvisor      (order=20)   — 4주차: RAG 검색 결과 주입
  *   PerformanceLoggingAdvisor  (order=100)  — 1주차: 최종 호출 토큰·시간 집계
  * </pre>
- * Memory 가 먼저 "아까 그 주문"의 orderId 를 복원해야 RAG 가 "그 주문의 환불 정책"을 검색할 수 있다.
- * 순서를 바꾸면(order 20→5) 어떤 품질 저하가 생기는지 3단계에서 관찰한다.
+ * 관례상 Memory(10) 뒤에 RAG(20)를 두지만, 기본 QA Advisor 는 현재 user query 텍스트를 그대로 임베딩하므로
+ * (Memory 가 쿼리를 재작성하지 않음) 순서를 20→5 로 바꿔도 검색 결과·메시지 구조가 동일했다 — 3단계 관찰(reports/week4/stage3).
  *
  * @see KnowledgeLoader FAQ/정책 문서를 VectorStore 에 적재하는 ApplicationRunner
  */
@@ -74,8 +74,8 @@ public class RagConfig {
               (정책 질문인데 문서에서 못 찾을 때만 "확인이 필요합니다, 상담원 연결로 도와드리겠습니다".)
             """);
 
-    // order(20): Memory(10) 뒤, Performance(100) 앞. Memory 가 대화 맥락을 복원한 "완성된 질문"을
-    // RAG 가 임베딩해야 "아까 그 주문 환불 돼요?"에서 올바른 정책이 검색된다.
+    // order(20): Memory(10) 뒤, Performance(100) 앞 (관례). 단 QA Advisor 는 현재 user query 를 임베딩하므로
+    // Memory 순서가 검색 쿼리를 바꾸지는 않는다(3단계 실험: 20↔5 차이 없음). 쿼리 재작성은 RetrievalAugmentationAdvisor 영역.
     @Bean
     public QuestionAnswerAdvisor questionAnswerAdvisor(VectorStore vectorStore) {
         SearchRequest searchRequest = SearchRequest.builder()
