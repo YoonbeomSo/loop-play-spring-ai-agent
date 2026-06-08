@@ -35,8 +35,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RagConfig {
 
-    // similaritySearch 가 반환할 상위 N건. 정책 7건 기준 1은 누락 위험·10은 토큰 폭증 → 출발점 4.
-    // (1 / 4 / 10 정량 비교는 3단계에서 실험)
+    // similaritySearch 가 반환할 상위 N건. 정책 7건 기준 1은 누락 위험·10은 토큰 폭증 → 4.
+    // K sweep(threshold off, 1/4/7/10): 입력토큰 4481→5782→6979, K=7=K=10(문서 7건뿐이라 상한).
+    // K>7 은 무의미, K=4 는 토큰 ~83% 로 상위 4건 확보. (reports/week4/stage1)
     private static final int TOP_K = 4;
 
     // COSINE_SIMILARITY 기준 0.0~1.0. 이 미만은 "관련 없음"으로 버린다.

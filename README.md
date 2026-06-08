@@ -594,10 +594,11 @@ PgVector(Docker) 단일 PostgreSQL 에 RAG(`vector_store`) + Round 3 JDBC Chat M
 1. **S4 — 거절은 됐으나 RAG 가 아니라 `[금지]` 가 막았다.** privacy 문서가 threshold 0.5 를 못 넘어 Context 가 비었다(입력토큰 3932 < 4096). quest 기대("privacy 히트")와 달랐던 것까지 기록.
 2. **S5 0/5 — "모델 한계"가 아니라 위치를 특정했다.** 통제 ablation: 지시 대명사 해결 단독 **5/5** · 정책 단독 **3/3** 인데 한 턴에 합치면 **0/5**. `[정책 인용 규칙]` 의 "확인 필요/상담원 연결" 되묻기 지시가 같은 모델의 "그거→1234" 지시 대명사 해결 까지 되묻기로 끌어감(정책규칙 빼면 5/5, 넣으면 0/3 — 단일변수 증명). **Memory∩RAG 교차의 프롬프트 긴장.**
 3. **QA 기본 템플릿의 "not prior knowledge / 거절" 이 범인이었다.** 빈 Context 질문(지시 대명사 해결·주문조회)을 무조건 되묻게 만들어 → 커스텀 템플릿("정책이면 Context, 무관하면 평소대로")으로 교체. RAG advisor 제거 ablation 으로 "RAG 가 원인 아님"도 기각.
+4. **Top-K sweep 실측** (threshold off, 격리): 입력토큰 K=1→4 →7 = 4481→5782→6979, **K=7=K=10=6979** (문서 7건뿐이라 상한 — K>7 무의미). 단 운영 threshold 0.5 에선 0.5 넘는 문서가 1~2건뿐이라 K 가 검색을 거의 안 바꿈(=threshold 가 K 를 먼저 가린다). 토큰 축만 실측(정답률은 Tool 노이즈로 미격리).
 
 ### 상세 보고서
 
-- [RAG 파이프라인 + 시나리오 5종](reports/week4/stage1/rag-pipeline-report.md) — 시드/`vector_store` 분포 + Context 블록 + S5 통제 ablation 표 + 설계 결정 4가지
+- [RAG 파이프라인 + 시나리오 5종](reports/week4/stage1/rag-pipeline-report.md) — 시드/`vector_store` 분포 + Context 블록 + S5 통제 ablation + **Top-K sweep 실측** + 설계 결정 4가지
 
 ## 2단계 — 청킹 A/B/C + 실패 관찰
 
