@@ -5,22 +5,22 @@
 
 ## A. RAG 주입 토큰 비용 (Phase 4-1)
 
-`AssistantChatClientConfig` 의 `defaultAdvisors` 를 임시 수정해 advisor 체인을 3조건으로 두고 같은 질문 측정:
+처음엔 `num_ctx` 기본값(4096)에서 쟀는데 (c)가 천장에 막혀 RAG 비용이 가려졌다 → `num-ctx: 8192` 로 올려 재측정.
+(`AssistantChatClientConfig` 의 `defaultAdvisors` 를 임시 수정해 (a)/(b)/(c) 체인을 만든다. 단일턴 질문.)
 
-| 조건 | Advisor 체인 | 입력 토큰 | 출력 토큰 | 응답시간(ms) | 메시지 수 |
-|---|---|---:|---:|---:|---:|
-| (a) Memory·RAG 없음 | performance | **3889** | 65 | 1741 | 2 (SYSTEM+USER) |
-| (b) Memory만 | memory, performance | **3889** | 126 | 14378 | 2 (빈 Memory) |
-| (c) Memory+RAG | memory, rag, performance | **4096** | 26 | 12588 | 2 (USER+Context) |
+| 조건 | Advisor 체인 | 입력 토큰 (num_ctx **4096**) | 입력 토큰 (num_ctx **8192**) |
+|---|---|---:|---:|
+| (a) Memory·RAG 없음 | performance | 3889 | 3889 |
+| (b) Memory만 | memory, performance | 3889 | 3889 (빈 Memory) |
+| (c) Memory+RAG | memory, rag, performance | **4096** (천장에 막힘) | **4917** |
+| **RAG 진짜 비용 (c−a)** | | +207 (가짜) | **+1028** |
 
 **관찰:**
-- **(a) = (b) = 3889** — 단일턴이라 Memory 가 비어 있어 토큰을 0 추가. "빈 Memory 는 비용이 없다"를 수치로 확인.
-- **(c) = 4096** — RAG 가 환불 정책 Context 를 주입해 (a) 대비 **+207** 증가. 그런데 주입된 문서(`refund-after-delivered`)는
-  실제 ~400~500 토큰이다. **(c) 가 정확히 4096 인 건 Ollama `num_ctx` 기본 천장(4096)에 닿아 잘렸다는 신호** —
-  즉 **RAG 의 진짜 토큰 비용이 천장에 가려 +207 로 과소 측정**됐다(2단계와 동일한 num_ctx 한계).
-- 응답시간은 CPU 추론 + 워밍업 영향으로 편차가 크다((a) 1.7s 는 캐시 효과). 입력 토큰이 더 신뢰할 지표.
-- 결론: "RAG 는 정확도를 토큰으로 산다"가 맞지만, **이 환경에선 system prompt(~3500)가 이미 천장의 대부분을
-  차지**해 RAG 증분이 천장에 묻힌다. 토큰 비용을 제대로 보려면 `num_ctx` 를 키우거나 system prompt 를 줄여야 한다.
+- **(a) = (b) = 3889** — 단일턴이라 Memory 가 비어 토큰 0 추가. "빈 Memory 는 비용 없음" 수치 확인.
+- **num_ctx 4096 일 땐 (c)가 정확히 4096** — system(~3500) + Context 가 천장을 넘어 잘림(truncation). RAG 비용이 +207 로만 보였다.
+- **num_ctx 8192 로 올리니 (c) = 4917** — RAG 가 실제로 더한 건 **+1028 토큰**(`refund-after-delivered` 정책 문서 + QA 템플릿 래퍼). **4096 천장이 비용의 ~80%(약 821토큰)를 가리고 있었던 것.**
+- **천장은 측정뿐 아니라 답 품질도 깎고 있었다** — 4096 일 때 (c) 출력 26토큰(Context 가 잘려 빈약)이었는데, 8192 에선 417토큰으로 답이 풍부해졌다. 응답시간도 토큰↑·검색으로 ~30s(=RAG 는 정확도를 토큰·시간으로 산다).
+- 결론: RAG 비용이 +1028 로 수치화됐다. 다만 **system prompt(~3500)가 큰 게 근본 비용** — num_ctx 를 키워 천장은 풀었지만 system prompt 다이어트는 별도 과제. (이 관찰을 위해 `num-ctx: 8192` 채택)
 
 ## B. Context 블록 원문 캡처 (Phase 4-2)
 

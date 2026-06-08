@@ -27,6 +27,7 @@ spring:
         model: qwen2.5
         options:
           temperature: 0.3
+          num-ctx: 8192   # 4주차: 기본 4096 천장에 RAG 토큰이 잘려 측정 안 됨 → 8192 로 상향(4단계 재측정)
       # 임베딩 모델 — 사용 전: ollama pull qwen3-embedding:0.6b (1024차원)
       embedding:
         model: qwen3-embedding:0.6b
