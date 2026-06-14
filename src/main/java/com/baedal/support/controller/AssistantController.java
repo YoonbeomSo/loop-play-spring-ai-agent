@@ -2,6 +2,7 @@ package com.baedal.support.controller;
 
 import com.baedal.support.dto.ChatRequest;
 import com.baedal.support.guardrail.GuardrailResult;
+import com.baedal.support.guardrail.HandoffDetector;
 import com.baedal.support.guardrail.InputGuardrailAdvisor;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,7 @@ public class AssistantController {
 
     private final ChatClient assistantChatClient;
     private final InputGuardrailAdvisor inputGuardrail;
+    private final HandoffDetector handoffDetector;
 
     /**
      * X-Session-Id 헤더로 고객 세션을 식별하고 ChatMemory 의 conversationId 로 전달.
@@ -60,6 +62,14 @@ public class AssistantController {
             GuardrailResult guard = inputGuardrail.check(message);
             log.warn("[InputGuardrail] 차단(.user() 전 선검사) — reason={}", guard.reason());
             return guard.fallbackMessage();
+        }
+
+        // 상담원 전환 선검사 — LLM 호출 전에 감지해야 일관된 문구 + 토큰/지연 0.
+        // (LLM 에 맡기면 "도움" 본능으로 전환을 회피하거나 매번 문구가 달라진다.)
+        HandoffDetector.HandoffDecision handoff = handoffDetector.detect(message);
+        if (handoff.handoff()) {
+            log.info("[Assistant] 상담원 전환 — reason={}", handoff.reason());
+            return handoff.message();
         }
 
         log.info("[Assistant] sessionId={} message={}", sessionId, message);

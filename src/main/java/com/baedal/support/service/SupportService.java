@@ -3,6 +3,7 @@ package com.baedal.support.service;
 import com.baedal.support.advisor.PerformanceLoggingAdvisor;
 import com.baedal.support.dto.SupportResponse;
 import com.baedal.support.guardrail.GuardrailResult;
+import com.baedal.support.guardrail.HandoffDetector;
 import com.baedal.support.guardrail.InputGuardrailAdvisor;
 import com.baedal.support.prompt.BaedalPrompt;
 import com.baedal.support.tool.OrderTools;
@@ -36,6 +37,7 @@ public class SupportService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final InputGuardrailAdvisor inputGuardrail;
+    private final HandoffDetector handoffDetector;
 
     public SupportService(
             ChatClient.Builder builder,
@@ -43,7 +45,8 @@ public class SupportService {
             PerformanceLoggingAdvisor performanceAdvisor,
             ObjectMapper objectMapper,
             OrderTools orderTools,
-            InputGuardrailAdvisor inputGuardrail
+            InputGuardrailAdvisor inputGuardrail,
+            HandoffDetector handoffDetector
     ) {
         // ragAdvisor(order=20) → performanceAdvisor(order=100). 이 ChatClient 는 Memory 가 없는
         // 단발 호출용(/support 구조화, /chat, /chat/stream)이라 RAG 가 매 요청 질문을 그대로 검색한다.
@@ -53,10 +56,11 @@ public class SupportService {
                 .defaultTools(orderTools)
                 .build();
         this.objectMapper = objectMapper;
-        // InputGuardrail 은 Advisor 체인에 넣지 않고 check() 만 빌려 쓴다.
+        // InputGuardrail/Handoff 는 Advisor 체인에 넣지 않고 검사 메서드만 빌려 쓴다.
         // short-circuit 평문 응답이 .entity(SupportResponse) JSON 파싱을 깨뜨리므로,
-        // /support 는 LLM 호출 전 선검사 후 SupportResponse 를 수동 조립하는 방식으로 차단한다.
+        // /support 는 LLM 호출 전 선검사 후 SupportResponse 를 수동 조립하는 방식으로 차단/전환한다.
         this.inputGuardrail = inputGuardrail;
+        this.handoffDetector = handoffDetector;
     }
 
     /** (B) 구조화 모드 — JSON 12필드. `/api/v1/support`. */
@@ -64,6 +68,10 @@ public class SupportService {
         GuardrailResult guard = inputGuardrail.check(message);
         if (!guard.allowed()) {
             return blockedResponse(guard);
+        }
+        HandoffDetector.HandoffDecision handoff = handoffDetector.detect(message);
+        if (handoff.handoff()) {
+            return handoffResponse(handoff);
         }
         return chatClient
                 .prompt()
@@ -91,6 +99,28 @@ public class SupportService {
                 0,
                 SupportResponse.ConfidenceLevel.HIGH,
                 SupportResponse.RecommendedRouting.AUTO
+        );
+    }
+
+    /**
+     * 상담원 전환 시 LLM 호출 없이 스키마에 맞는 SupportResponse 를 수동 조립한다.
+     * quest 규약: Category=ETC, Urgency=HIGH, nextAction="상담원 연결 진행".
+     * 후속 책임 주체가 상담원이므로 recommendedRouting=AGENT_REVIEW.
+     */
+    private SupportResponse handoffResponse(HandoffDetector.HandoffDecision handoff) {
+        return new SupportResponse(
+                "상담원 전환(" + handoff.reason() + ") — LLM 호출 없이 반환됨.",
+                handoff.message(),
+                SupportResponse.Category.ETC,
+                SupportResponse.Intent.ETC_OTHER,
+                List.of(),
+                SupportResponse.Urgency.HIGH,
+                "상담원 연결 진행",
+                List.of(),
+                List.of(),
+                0,
+                SupportResponse.ConfidenceLevel.HIGH,
+                SupportResponse.RecommendedRouting.AGENT_REVIEW
         );
     }
 
