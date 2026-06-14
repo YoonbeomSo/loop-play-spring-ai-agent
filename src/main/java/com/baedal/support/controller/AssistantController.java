@@ -1,6 +1,8 @@
 package com.baedal.support.controller;
 
 import com.baedal.support.dto.ChatRequest;
+import com.baedal.support.guardrail.GuardrailResult;
+import com.baedal.support.guardrail.InputGuardrailAdvisor;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +37,7 @@ import org.springframework.web.bind.annotation.*;
 public class AssistantController {
 
     private final ChatClient assistantChatClient;
+    private final InputGuardrailAdvisor inputGuardrail;
 
     /**
      * X-Session-Id 헤더로 고객 세션을 식별하고 ChatMemory 의 conversationId 로 전달.
@@ -48,10 +51,21 @@ public class AssistantController {
     @PostMapping
     public String ask(@Valid @RequestBody ChatRequest req,
                       @RequestHeader(value = "X-Session-Id", defaultValue = "default") String sessionId) {
-        log.info("[Assistant] sessionId={} message={}", sessionId, req.message());
+        String message = req.message() == null ? "" : req.message();
+
+        // 빈 입력 선검사 — Spring AI 의 .user()가 Assert.hasText 로 빈 텍스트를 거부(IllegalArgumentException)해
+        // Advisor 체인(order=5)에 닿기 전에 터진다. 그래서 빈 입력만 .user() 호출 전에 Guardrail.check()로
+        // 막는다. injection·길이초과는 비어있지 않아 .user()를 통과하므로 InputGuardrailAdvisor 가 처리한다.
+        if (message.isBlank()) {
+            GuardrailResult guard = inputGuardrail.check(message);
+            log.warn("[InputGuardrail] 차단(.user() 전 선검사) — reason={}", guard.reason());
+            return guard.fallbackMessage();
+        }
+
+        log.info("[Assistant] sessionId={} message={}", sessionId, message);
         return assistantChatClient
                 .prompt()
-                .user(req.message())
+                .user(message)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
                 .call()
                 .content();
