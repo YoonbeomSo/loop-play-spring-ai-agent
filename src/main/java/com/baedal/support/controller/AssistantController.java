@@ -73,11 +73,26 @@ public class AssistantController {
         }
 
         log.info("[Assistant] sessionId={} message={}", sessionId, message);
-        return assistantChatClient
-                .prompt()
-                .user(message)
-                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
-                .call()
-                .content();
+        try {
+            return assistantChatClient
+                    .prompt()
+                    .user(message)
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, sessionId))
+                    .call()
+                    .content();
+        } catch (Exception e) {
+            return fallback(e);
+        }
+    }
+
+    /**
+     * 최종 방어선 — Tool/LLM/VectorStore 실패 시 스택 트레이스를 고객에게 노출하지 않고
+     * 안전 문구만 반환한다. 원인은 log.error 로 내부 로그에만 남기고, 응답엔 상담원 연결 번호를 포함한다.
+     * (e.getMessage() 를 응답에 넣으면 SQL/스택 메시지가 유출되므로 절대 노출하지 않는다.)
+     */
+    private String fallback(Throwable e) {
+        log.error("[Assistant] 응답 생성 실패 — {}", e.toString(), e);
+        return "죄송해요, 지금 일시적인 문제가 발생했어요. 잠시 후 다시 시도하시거나, "
+                + "급하시면 상담원 연결(1600-0987)로 도와드리겠습니다.";
     }
 }
